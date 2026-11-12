@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+
+  /* ── C Breeze light theme — surface scale ─────────────────────────────
+     Single source of truth for page/panel colours. Light, airy, bright:
+     near-white page, white panels, soft hairline borders, and a very light
+     teal wash for alternating sections. */
+  --color-ink: #fafbfc; /* page background (near-white) */
+  --color-wash: #f0fdfa; /* alternating section wash (teal-50) */
+  --color-panel: #ffffff; /* cards, nav, footer panes */
+  --color-surface: #e6ebf1; /* soft hairline borders */
+  --color-surface-2: #d5dde6; /* stronger borders / dividers */
+
+  /* ── Text scale (all AA on ink/white) ───────────────────────────────── */
+  --color-heading: #0f172a; /* slate-900 headings */
+  --color-body: #475569; /* slate-600 body copy */
+}
+
+@layer base {
+  html {
+    /* Native selects, date pickers and scrollbars follow the light theme. */
+    color-scheme: light;
+  }
+
+  html,
+  body {
+    @apply bg-ink text-slate-600 antialiased;
+  }
+
+  /* Safety net: any heading without an explicit colour stays dark slate. */
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply text-slate-900;
+  }
+
+  ::selection {
+    @apply bg-teal-200 text-slate-900;
+  }
+
+  /* Keep native <option> rows legible inside light inputs. */
+  select option {
+    @apply bg-white text-slate-900;
+  }
+}
+
+@layer components {
+  /* Light form inputs (signup/login/dashboard/contact/notary signup). */
+  .input {
+    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm placeholder-slate-400 transition focus:border-teal-600 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-600/20;
+  }
+
+  /* Form label — high contrast on the white panels. */
+  .label {
+    @apply mb-1.5 block text-sm font-medium text-slate-700;
+  }
+
+  /* Soft white card with a faint teal lift — sits on the light washes. */
+  .glass {
+    @apply rounded-2xl border border-slate-200 bg-white/85 shadow-[0_1px_2px_rgba(15,23,42,0.03),0_10px_28px_-22px_rgba(13,148,136,0.30)] backdrop-blur;
+  }
+
+  /* Solid panel card — used for forms, lists and app surfaces. */
+  .card {
+    @apply rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_12px_28px_-22px_rgba(15,23,42,0.18)];
+  }
+
+  /* Primary gradient button (teal → violet → orange).
+     Stops are 700-level so white label text clears WCAG AA (≥4.5:1). */
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-xl bg-gradient-to-br from-teal-700 via-violet-700 to-orange-700 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-teal-900/15 ring-1 ring-slate-900/5 transition hover:brightness-110 hover:shadow-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  /* Ghost / outline button on light. */
+  .btn-ghost {
+    @apply inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-teal-600 hover:bg-teal-50 hover:text-teal-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-700 focus-visible:ring-offset-2;
+  }
+
+  /* Small inline alert for form errors. */
+  .alert-error {
+    @apply rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700;
+  }
+
+  /* Eyebrow pill used above page headings. */
+  .eyebrow {
+    @apply inline-block rounded-full border border-teal-200 bg-teal-50 px-4 py-1.5 text-sm font-medium text-teal-800;
+  }
+}
