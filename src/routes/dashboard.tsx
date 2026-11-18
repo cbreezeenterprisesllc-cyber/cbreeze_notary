@@ -3,10 +3,18 @@ import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { getCurrentBusiness, logoutBusiness } from "~/lib/auth";
 import { createJob } from "~/lib/jobs";
+import { confirmCheckout, createCheckoutForJob } from "~/lib/payments";
 import { listMyJobsWithDispatch } from "~/lib/dispatch";
 import type { BusinessJob } from "~/lib/dispatch";
 
 export const Route = createFileRoute("/dashboard")({
+  // Stripe Checkout returns here: ?checkout=success&session_id=cs_… or ?checkout=cancelled
+  validateSearch: (search: Record<string, unknown>) => ({
+    checkout:
+      typeof search.checkout === "string" ? search.checkout : undefined,
+    session_id:
+      typeof search.session_id === "string" ? search.session_id : undefined,
+  }),
   beforeLoad: async () => {
     const user = await getCurrentBusiness();
     if (!user) {
@@ -21,11 +29,17 @@ const LOAN_TYPES = ["Refinance", "Purchase", "HELOC", "Home Equity", "Other"];
 
 function Dashboard() {
   const { user } = Route.useRouteContext();
+  const search = Route.useSearch();
   const navigate = useNavigate();
 
   const [busy, setBusy] = useState(false);
   const [jobs, setJobs] = useState<BusinessJob[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(true);
+  const [notice, setNotice] = useState<{
+    tone: "success" | "info" | "error";
+    text: string;
+  } | null>(null);
+  const [payingJobId, setPayingJobId] = useState<string | null>(null);
 
   // job form state
   const [borrowerName, setBorrowerName] = useState("");
@@ -54,6 +68,87 @@ function Dashboard() {
     void refreshJobs();
   }, [refreshJobs]);
 
+  // Return trip from Stripe Checkout. Only a session Stripe reports as PAID (and
+  // that belongs to one of this business's jobs) marks the job paid and lets the
+  // dispatch engine offer it to a notary.
+  useEffect(() => {
+    const checkout = search.checkout;
+    if (!checkout) return;
+    let cancelled = false;
+
+    (async () => {
+      if (checkout === "success" && search.session_id) {
+        try {
+          const result = await confirmCheckout({
+            data: { session_id: search.session_id },
+          });
+          if (cancelled) return;
+          setNotice(
+            result.paid
+              ? {
+                  tone: "success",
+                  text: "Payment received — job sent to notaries.",
+                }
+              : {
+                  tone: "info",
+                  text: "Payment not completed — job saved, pay to dispatch it.",
+                },
+          );
+        } catch {
+          if (cancelled) return;
+          setNotice({
+            tone: "error",
+            text: "We couldn't confirm that payment. If you were charged, the job will show as paid once Stripe confirms it.",
+          });
+        }
+      } else if (checkout === "cancelled") {
+        setNotice({
+          tone: "info",
+          text: "Payment cancelled — job saved, pay to dispatch it.",
+        });
+      }
+
+      await refreshJobs();
+      if (cancelled) return;
+      // Drop the Stripe query params so a refresh doesn't re-run the check.
+      void navigate({
+        to: "/dashboard",
+        search: { checkout: undefined, session_id: undefined },
+        replace: true,
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [search.checkout, search.session_id, refreshJobs, navigate]);
+
+  async function onPay(jobId: string) {
+    setPayingJobId(jobId);
+    setNotice(null);
+    try {
+      const { url } = await createCheckoutForJob({
+        data: { job_id: jobId, origin: window.location.origin },
+      });
+      if (url) {
+        window.location.href = url;
+        return;
+      }
+      setNotice({ tone: "info", text: "That job is already paid." });
+      await refreshJobs();
+    } catch (err) {
+      setNotice({
+        tone: "error",
+        text:
+          err instanceof Error
+            ? err.message
+            : "We couldn't start the payment. Please try again.",
+      });
+    } finally {
+      setPayingJobId(null);
+    }
+  }
+
   async function onLogout() {
     setBusy(true);
     try {
@@ -67,9 +162,10 @@ function Dashboard() {
   async function onSubmitJob(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setFormError(null);
+    setNotice(null);
     setSubmitting(true);
     try {
-      await createJob({
+      const created = await createJob({
         data: {
           borrower_name: borrowerName,
           borrower_email: borrowerEmail || null,
@@ -79,9 +175,10 @@ function Dashboard() {
           state: state || null,
           signing_date_time: signingDateTime || null,
           fee_amount: feeAmount ? Number(feeAmount) : null,
+          origin: window.location.origin,
         },
       });
-      // reset form and refresh list
+      // reset form
       setBorrowerName("");
       setBorrowerEmail("");
       setLoanType("Refinance");
@@ -90,6 +187,15 @@ function Dashboard() {
       setState("");
       setSigningDateTime("");
       setFeeAmount("");
+      if (created.checkout_url) {
+        // Pay first: the job is saved as unpaid and dispatches only after payment.
+        window.location.href = created.checkout_url;
+        return;
+      }
+      setNotice({
+        tone: "error",
+        text: "Job saved, but we couldn't start the payment. Use “Pay now” on the job below.",
+      });
       await refreshJobs();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Something went wrong.");
@@ -124,6 +230,24 @@ function Dashboard() {
           </button>
         </div>
 
+        {notice && (
+          <div
+            role="status"
+            className={`mt-6 flex items-start gap-3 rounded-xl px-4 py-3 text-sm ring-1 ring-inset ${
+              notice.tone === "success"
+                ? "bg-emerald-50 text-emerald-800 ring-emerald-200"
+                : notice.tone === "error"
+                  ? "bg-rose-50 text-rose-800 ring-rose-200"
+                  : "bg-amber-50 text-amber-800 ring-amber-200"
+            }`}
+          >
+            <span aria-hidden="true" className="mt-0.5 font-bold">
+              {notice.tone === "success" ? "✓" : notice.tone === "error" ? "!" : "•"}
+            </span>
+            <p>{notice.text}</p>
+          </div>
+        )}
+
         {/* Post a signing job */}
         <div className="card mt-10 p-6 sm:p-8">
           <div className="flex items-start gap-3">
@@ -135,8 +259,8 @@ function Dashboard() {
                 Post a signing job
               </h2>
               <p className="mt-1 text-sm text-slate-600">
-                Fill in the signing details and we&apos;ll match a vetted local
-                notary.
+                Fill in the signing details and pay the signing fee — once
+                payment clears we match a vetted local notary automatically.
               </p>
             </div>
           </div>
@@ -237,7 +361,7 @@ function Dashboard() {
                 disabled={submitting}
                 className="btn-primary w-full sm:w-auto"
               >
-                {submitting ? "Posting…" : "Post job"}
+                {submitting ? "Starting payment…" : "Continue to payment"}
               </button>
             </div>
           </form>
@@ -280,7 +404,12 @@ function Dashboard() {
           ) : (
             <ul className="mt-4 space-y-3">
               {jobs.map((job) => (
-                <JobCard key={job.id} job={job} />
+                <JobCard
+                  key={job.id}
+                  job={job}
+                  paying={payingJobId === job.id}
+                  onPay={onPay}
+                />
               ))}
             </ul>
           )}
@@ -290,8 +419,17 @@ function Dashboard() {
   );
 }
 
-function JobCard({ job }: { job: BusinessJob }) {
+function JobCard({
+  job,
+  paying,
+  onPay,
+}: {
+  job: BusinessJob;
+  paying: boolean;
+  onPay: (jobId: string) => void;
+}) {
   const dispatch = job.dispatch;
+  const unpaid = !job.paid_at;
   return (
     <li className="glass p-5 transition hover:border-teal-300 hover:bg-white">
       <div className="flex items-start justify-between gap-4">
@@ -301,7 +439,22 @@ function JobCard({ job }: { job: BusinessJob }) {
             {[job.loan_type, locationLabel(job)].filter(Boolean).join(" · ")}
           </p>
         </div>
-        <StatusBadge status={job.status} />
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
+          {unpaid ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">
+              <span className="h-1.5 w-1.5 rounded-full bg-current" />
+              Awaiting payment
+            </span>
+          ) : (
+            <>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+                <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                Paid
+              </span>
+              <StatusBadge status={job.status} />
+            </>
+          )}
+        </div>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
         {job.signing_date_time && (
@@ -314,19 +467,41 @@ function JobCard({ job }: { job: BusinessJob }) {
         )}
       </div>
 
-      {/* Dispatch state — updated automatically by the cascade, never manually */}
-      <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-        <span
-          aria-hidden="true"
-          className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${dispatchDot(dispatch.code)}`}
-        />
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-slate-900">{dispatch.label}</p>
-          {dispatch.detail && (
-            <p className="mt-0.5 text-xs text-slate-600">{dispatch.detail}</p>
-          )}
+      {unpaid ? (
+        // Unpaid jobs are never dispatched — payment comes first.
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2.5">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-slate-900">
+              Awaiting payment
+            </p>
+            <p className="mt-0.5 text-xs text-slate-600">
+              This job is offered to notaries as soon as the signing fee is paid.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onPay(job.id)}
+            disabled={paying}
+            className="btn-primary px-4 py-2 text-sm"
+          >
+            {paying ? "Opening…" : "Pay now"}
+          </button>
         </div>
-      </div>
+      ) : (
+        /* Dispatch state — updated automatically by the cascade, never manually */
+        <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+          <span
+            aria-hidden="true"
+            className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${dispatchDot(dispatch.code)}`}
+          />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-slate-900">{dispatch.label}</p>
+            {dispatch.detail && (
+              <p className="mt-0.5 text-xs text-slate-600">{dispatch.detail}</p>
+            )}
+          </div>
+        </div>
+      )}
     </li>
   );
 }

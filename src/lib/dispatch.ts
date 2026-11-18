@@ -157,6 +157,7 @@ interface JobRow {
   notary_pay_amount: string | number | null;
   created_at: string | Date;
   assigned_at?: string | Date | null;
+  paid_at?: string | Date | null;
 }
 
 function mapJob(row: JobRow): Job {
@@ -173,6 +174,7 @@ function mapJob(row: JobRow): Job {
     status: row.status as Job["status"],
     fee_amount: normNumber(row.fee_amount),
     notary_pay_amount: normNumber(row.notary_pay_amount),
+    paid_at: norm(row.paid_at),
     created_at: norm(row.created_at) ?? "",
   };
 }
@@ -247,10 +249,15 @@ export async function offerNextNotary(jobId: string): Promise<string | null> {
       id: string;
       status: string;
       state: string | null;
-    }>("SELECT id, status, state FROM jobs WHERE id = $1 FOR UPDATE", [jobId]);
+      paid_at: string | Date | null;
+    }>(
+      "SELECT id, status, state, paid_at FROM jobs WHERE id = $1 FOR UPDATE",
+      [jobId],
+    );
     const job = jobRes.rows[0];
-    // Guardrail: only a pending job may receive an offer.
-    if (!job || job.status !== "pending") return null;
+    // Guardrail: only a pending, PAID job may receive an offer. An unpaid job
+    // (paid_at IS NULL) never reaches a notary.
+    if (!job || job.status !== "pending" || job.paid_at == null) return null;
 
     const open = await client.query(
       "SELECT 1 FROM assignments WHERE job_id = $1 AND status = 'offered' LIMIT 1",
@@ -294,8 +301,9 @@ export async function offerNextNotary(jobId: string): Promise<string | null> {
  *     whose job is no longer 'pending' (assigned / completed / cancelled). The
  *     conditional UPDATE is the lock: a row can only be expired once, so
  *     concurrent sweeps cannot double-cascade.
- *  2. For every pending job without a live offer, offer it to the next
- *     matching notary (this is what makes decline/timeout cascade).
+ *  2. For every pending, PAID job without a live offer, offer it to the next
+ *     matching notary (this is what makes decline/timeout cascade). Unpaid jobs
+ *     (`paid_at IS NULL`) are never offered — they wait for their payment.
  */
 export async function runSweepCore(): Promise<SweepResult> {
   const { ensureDb, query } = await db();
@@ -320,6 +328,7 @@ export async function runSweepCore(): Promise<SweepResult> {
     `SELECT j.id
        FROM jobs j
       WHERE j.status = 'pending'
+        AND j.paid_at IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM assignments a
            WHERE a.job_id = j.id AND a.status = 'offered'
@@ -616,11 +625,11 @@ export const respondToOffer = createServerFn({ method: "POST" })
         if (!accepted) {
           throw new Error("That offer is no longer available.");
         }
-        // Job must still be pending — an accepted offer closes the cascade.
+        // Job must still be pending AND paid — an accepted offer closes the cascade.
         const jobUpdate = await client.query(
           `UPDATE jobs
               SET status = 'assigned', assigned_at = now()
-            WHERE id = $1 AND status = 'pending'`,
+            WHERE id = $1 AND status = 'pending' AND paid_at IS NOT NULL`,
           [accepted.job_id],
         );
         if ((jobUpdate.rowCount ?? 0) === 0) {

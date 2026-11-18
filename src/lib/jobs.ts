@@ -6,10 +6,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { ensureDb, query } from "~/db/index";
 import { getCurrentBusiness } from "./auth";
-// Runtime import of the dispatch engine: posting a job kicks the cascade.
-// `dispatch.ts` only imports this module's types (`import type`), so there is no
-// runtime cycle.
-import { runSweepCore } from "./dispatch";
+import { DEFAULT_SIGNING_FEE_USD, createCheckoutSessionForJob } from "./payments";
 
 export type JobStatus = "pending" | "assigned" | "completed" | "cancelled";
 
@@ -26,6 +23,8 @@ export interface Job {
   status: JobStatus;
   fee_amount: number | null;
   notary_pay_amount: number | null;
+  /** Set once Stripe Checkout reports the signing fee as paid. */
+  paid_at: string | null;
   created_at: string;
 }
 
@@ -38,6 +37,8 @@ export interface NewJobInput {
   state?: string | null;
   signing_date_time?: string | null;
   fee_amount?: number | null;
+  /** Site origin (https://…) used to build the Stripe Checkout redirect URLs. */
+  origin?: string | null;
 }
 
 /** Row shape returned by pg for the `jobs` table (timestamps arrive as Dates). */
@@ -54,6 +55,7 @@ interface JobRow {
   status: string;
   fee_amount: string | number | null;
   notary_pay_amount: string | number | null;
+  paid_at?: string | Date | null;
   created_at: string | Date;
 }
 
@@ -83,11 +85,12 @@ function mapJob(row: JobRow): Job {
     status: row.status as JobStatus,
     fee_amount: normNumber(row.fee_amount),
     notary_pay_amount: normNumber(row.notary_pay_amount),
+    paid_at: norm(row.paid_at),
     created_at: norm(row.created_at) ?? "",
   };
 }
 
-function validateJob(input: NewJobInput): NewJobInput {
+function validateJob(input: NewJobInput): NewJobInput & { origin: string } {
   const raw = (input ?? {}) as Partial<NewJobInput>;
   const borrower_name = (raw.borrower_name ?? "").trim();
   if (!borrower_name) throw new Error("Borrower name is required.");
@@ -100,16 +103,39 @@ function validateJob(input: NewJobInput): NewJobInput {
     state: raw.state?.trim()?.toUpperCase() || null,
     signing_date_time: raw.signing_date_time || null,
     fee_amount: normNumber(raw.fee_amount),
+    origin: String(raw.origin ?? "").trim(),
   };
 }
 
-/** Create a job owned by the currently logged-in business. */
+/** Effective fee in dollars: the posted fee, or the default when it is 0/missing. */
+function effectiveFee(fee: number | null | undefined): number {
+  return fee != null && Number.isFinite(fee) && fee > 0
+    ? Math.round(fee * 100) / 100
+    : DEFAULT_SIGNING_FEE_USD;
+}
+
+export interface CreatedJob {
+  job: Job;
+  /** Stripe Checkout URL the browser should be sent to (null if Stripe failed). */
+  checkout_url: string | null;
+}
+
+/**
+ * Create a job owned by the currently logged-in business and start its Stripe
+ * Checkout payment.
+ *
+ * The job is created UNPAID: nothing is offered to a notary here. The dispatch
+ * cascade only starts once Stripe reports the fee as paid (see
+ * `confirmCheckout` in ~/lib/payments and the `paid_at` gates in ~/lib/dispatch).
+ */
 export const createJob = createServerFn({ method: "POST" })
   .validator(validateJob)
-  .handler(async ({ data }) => {
+  .handler(async ({ data }): Promise<CreatedJob> => {
     const user = await getCurrentBusiness();
     if (!user) throw new Error("Please log in to post a job.");
     const businessId = user.id;
+    const fee = effectiveFee(data.fee_amount);
+    const origin = data.origin;
     await ensureDb();
     const rows = await query<JobRow>(
       `INSERT INTO jobs
@@ -125,18 +151,33 @@ export const createJob = createServerFn({ method: "POST" })
         data.city,
         data.state,
         data.signing_date_time,
-        data.fee_amount,
+        fee,
       ],
     );
-    // Dispatch: the new job is 'pending' — hand it to the first matching notary
-    // right away. Nobody assigns anything by hand. A failure here must not lose
-    // the job (it simply stays pending and the next sweep picks it up).
+    const job = mapJob(rows[0]);
+
+    // Payment first, dispatch second. If Stripe is unreachable the job still
+    // exists as unpaid and the business can retry with "Pay now" on the job card.
+    let checkoutUrl: string | null = null;
     try {
-      await runSweepCore();
+      const session = await createCheckoutSessionForJob({
+        jobId: job.id,
+        businessId,
+        borrowerName: job.borrower_name,
+        state: job.state,
+        feeAmount: job.fee_amount,
+        origin,
+      });
+      await query("UPDATE jobs SET stripe_session_id = $2 WHERE id = $1", [
+        job.id,
+        session.sessionId,
+      ]);
+      checkoutUrl = session.url;
     } catch (err) {
-      console.error("[dispatch] sweep after job creation failed:", err);
+      console.error("[payments] could not create Checkout Session:", err);
     }
-    return mapJob(rows[0]);
+
+    return { job, checkout_url: checkoutUrl };
   });
 
 /** List the current business's jobs, newest first. */

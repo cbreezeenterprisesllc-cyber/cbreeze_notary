@@ -52,8 +52,17 @@ CREATE TABLE IF NOT EXISTS jobs (
     CHECK (status IN ('pending','assigned','completed','cancelled')),
   fee_amount NUMERIC(10,2),
   notary_pay_amount NUMERIC(10,2),
+  stripe_session_id TEXT,
+  paid_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Payment state (Stripe Checkout). Derived state: `paid_at IS NULL` = unpaid,
+-- `paid_at IS NOT NULL` = paid. Unpaid jobs are never offered to a notary —
+-- see the `paid_at IS NOT NULL` gates in src/lib/dispatch.ts. Idempotent, so it
+-- also upgrades a jobs table created before payments existed.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS stripe_session_id TEXT;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
 
 -- One row per (job, notary) offer/assignment. The automated dispatch engine walks
 -- a job through candidate notaries sequentially: `offered` -> `declined`/`expired`
