@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { createFileRoute } from "@tanstack/react-router";
+import { TrustBadge } from "../components/TrustBadge";
 
 export const Route = createFileRoute("/")({
   component: Home,
@@ -51,21 +52,41 @@ function Home() {
 
       {/* ───── Trust Signals ───── */}
       <section className="border-b border-slate-200 py-12">
-        <div className="mx-auto max-w-7xl px-6 text-center">
-          <p className="text-sm font-semibold uppercase tracking-wider text-slate-600">
-            Trusted by professionals nationwide
+        <div className="mx-auto max-w-7xl px-6">
+          <p className="text-center text-sm font-semibold uppercase tracking-wider text-slate-600">
+            Our commitment to every signing
           </p>
-          <div className="mt-8 grid grid-cols-2 gap-8 md:grid-cols-4">
-            {["TitleCo", "SecureLend", "EscrowFirst", "Prime Settlements"].map(
-              (name) => (
-                <div
-                  key={name}
-                  className="flex items-center justify-center text-lg font-bold text-slate-500"
-                >
-                  {name}
-                </div>
-              ),
-            )}
+          <div className="mt-8 flex flex-col items-center gap-10 md:flex-row md:items-center md:justify-center md:gap-14">
+            <TrustBadge className="h-44 w-44 shrink-0" />
+            <div className="grid gap-6 text-center sm:grid-cols-3 md:text-left">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">
+                  Vetted notaries
+                </h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  Notaries join with their commission details on record, and
+                  every offer routes to a commissioned signing agent.
+                </p>
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">
+                  All 50 states + DC
+                </h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  Post a signing anywhere in the country — the job goes to a
+                  notary matching that state.
+                </p>
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">
+                  Automated dispatch
+                </h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  Offers go out instantly; a decline or timeout cascades to the
+                  next matching notary — no chasing.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       </section>
