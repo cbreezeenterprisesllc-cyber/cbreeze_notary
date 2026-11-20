@@ -272,6 +272,16 @@ function Footer() {
             <h3 className="text-sm font-semibold text-slate-900">Contact</h3>
             <ul className="mt-3 space-y-2 text-sm text-slate-600">
               <li>609-547-9169</li>
+              <li>
+                <a
+                  href="https://www.facebook.com/SignWithCBreeze/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-slate-900"
+                >
+                  Facebook
+                </a>
+              </li>
             </ul>
           </div>
         </div>
