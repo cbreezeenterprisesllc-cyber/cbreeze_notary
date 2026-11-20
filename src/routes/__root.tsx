@@ -38,6 +38,7 @@ export const Route = createRootRoute({
       },
     ],
     links: [
+      { rel: "icon", type: "image/png", href: "/favicon.png" },
       { rel: "stylesheet", href: appCss },
       {
         rel: "preconnect",
@@ -91,15 +92,14 @@ function Navbar() {
       <nav className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-y-3 px-5 py-4 sm:px-6">
         <Link
           to="/"
-          className="flex items-center gap-2"
+          className="flex items-center"
           onClick={() => setMenuOpen(false)}
         >
-          <span className="bg-gradient-to-br from-teal-600 via-violet-600 to-orange-600 bg-clip-text text-xl font-extrabold tracking-tight text-transparent">
-            C Breeze
-          </span>
-          <span className="hidden text-sm font-medium text-slate-600 sm:inline">
-            Notary &amp; Signing
-          </span>
+          <img
+            src="/cbreeze-logo.png"
+            alt="C Breeze Notary and Signing"
+            className="h-11 w-auto"
+          />
         </Link>
 
         <div className="flex items-center gap-3 sm:gap-5">
@@ -208,9 +208,11 @@ function Footer() {
       <div className="mx-auto max-w-7xl px-6 py-12">
         <div className="grid gap-8 md:grid-cols-3">
           <div>
-            <span className="bg-gradient-to-br from-teal-600 via-violet-600 to-orange-600 bg-clip-text text-lg font-bold text-transparent">
-              C Breeze Notary &amp; Signing
-            </span>
+            <img
+              src="/cbreeze-logo.png"
+              alt="C Breeze Notary and Signing"
+              className="h-12 w-auto mix-blend-multiply"
+            />
             <p className="mt-2 text-sm text-slate-600">
               Reliable loan document signings, anywhere in the United States.
             </p>
